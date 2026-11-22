@@ -1,0 +1,29 @@
+
+# Dependencies
+node_modules/
+backend/node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+
+# Build files
+dist/
+backend/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+# User uploaded images
+backend/uploads/*
+!backend/uploads/.gitkeep
