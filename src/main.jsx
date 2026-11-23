@@ -19,17 +19,6 @@ const [itemsLoading, setItemsLoading] = useState(true);
   }
 });
   const [query, setQuery] = useState('')
-  const [claims, setClaims] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('unifind_claims') || '[]') }
-    catch { return [] }
-  })
-
-  const submitClaim = (claim) => {
-    const updated = [...claims, claim]
-    setClaims(updated)
-    localStorage.setItem('unifind_claims', JSON.stringify(updated))
-  }
-
 const logout = () => {
   localStorage.removeItem("unifind_token");
   localStorage.removeItem("unifind_user");
@@ -124,7 +113,17 @@ useEffect(() => {
   />
 )} 
     {page === 'report' && <ReportPage go={go} onReportSubmitted={loadItems}/>} 
-    {page === 'details' && <Details item={selected} go={go} claims={claims} onSubmitClaim={submitClaim}/>} 
+    {page === 'details' && <Details item={selected} go={go}/>}
+    {page === 'admin' && user?.role === 'admin' && (
+      <AdminDashboard items={items} onItemsChanged={loadItems}/>
+    )}
+    {page === 'admin' && user?.role !== 'admin' && (
+      <main className="mx-auto max-w-6xl px-5 py-20 text-center">
+        <h1 className="text-2xl font-black">Admin access required</h1>
+        <p className="mt-2 text-slate-500">Please login with an administrator account.</p>
+        <button onClick={() => go("login")} className="mt-5 rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white">Login</button>
+      </main>
+    )}
     {page === 'login' && (
   <Auth mode="login" go={go} onLogin={setUser}/>
 )}
@@ -142,6 +141,14 @@ function Navbar({page,go,menu,setMenu,user,logout}) { return <header className="
     <nav className="hidden items-center gap-7 md:flex">
       <NavLink active={page==='home'} onClick={()=>go('home')}>Home</NavLink><NavLink active={page==='lost'} onClick={()=>go('lost')}>Lost Items</NavLink><NavLink active={page==='found'} onClick={()=>go('found')}>Found Items</NavLink>
       <button onClick={()=>go('report')} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">Report Item</button>
+      {user?.role === "admin" && (
+        <button
+          onClick={() => go("admin")}
+          className={`text-sm font-semibold ${page === "admin" ? "text-indigo-600" : "text-slate-600 hover:text-indigo-600"}`}
+        >
+          Admin Dashboard
+        </button>
+      )}
       {user ? (
   <div className="flex items-center gap-3">
     <span className="text-sm font-semibold text-slate-700">
@@ -166,7 +173,7 @@ function Navbar({page,go,menu,setMenu,user,logout}) { return <header className="
     </nav>
     <button className="rounded-lg p-2 md:hidden" onClick={()=>setMenu(!menu)}>{menu?<X/>:<Menu/>}</button>
   </div>
-  {menu && <div className="border-t border-slate-100 bg-white px-5 pb-5 md:hidden"><div className="flex flex-col gap-2 pt-3"><NavLink onClick={()=>go('home')}>Home</NavLink><NavLink onClick={()=>go('lost')}>Lost Items</NavLink><NavLink onClick={()=>go('found')}>Found Items</NavLink><button onClick={()=>go('report')} className="mt-2 rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white">Report Item</button><button onClick={()=>go('login')} className="rounded-xl px-4 py-3 text-left font-semibold">Login</button></div></div>}
+  {menu && <div className="border-t border-slate-100 bg-white px-5 pb-5 md:hidden"><div className="flex flex-col gap-2 pt-3"><NavLink onClick={()=>go('home')}>Home</NavLink><NavLink onClick={()=>go('lost')}>Lost Items</NavLink><NavLink onClick={()=>go('found')}>Found Items</NavLink>{user?.role === "admin" && <NavLink onClick={()=>go("admin")}>Admin Dashboard</NavLink>}<button onClick={()=>go('report')} className="mt-2 rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white">Report Item</button>{user ? <button onClick={logout} className="rounded-xl px-4 py-3 text-left font-semibold text-red-600">Logout</button> : <button onClick={()=>go('login')} className="rounded-xl px-4 py-3 text-left font-semibold">Login</button>}</div></div>}
 </header> }
 function NavLink({children,onClick,active}) { return <button onClick={onClick} className={`text-sm font-semibold ${active?'text-indigo-600':'text-slate-600 hover:text-indigo-600'}`}>{children}</button> }
 
@@ -230,6 +237,177 @@ function ItemCard({item,open}) { return <article className="overflow-hidden roun
   )}
 </div><div className="p-5"><div className="flex items-center justify-between gap-2"><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.type==='Found'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-700'}`}>{item.type}</span><span className="text-xs text-slate-400">#{String(item.id).padStart(4,'0')}</span></div><h3 className="mt-3 text-lg font-extrabold">{item.name}</h3><p className="mt-1 text-sm text-slate-500">{item.category}</p><div className="mt-4 space-y-2 text-sm text-slate-500"><p className="flex items-center gap-2"><MapPin size={15}/>{item.location}</p><p className="flex items-center gap-2"><CalendarDays size={15}/>{item.date}</p></div><button onClick={()=>open(item)} className="mt-5 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700">View Details</button></div></article> }
 
+
+function AdminDashboard({ items, onItemsChanged }) {
+  const [claims, setClaims] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actionLoading, setActionLoading] = useState(null);
+  const [notice, setNotice] = useState("");
+
+  const loadClaims = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const token = localStorage.getItem("unifind_token");
+      if (!token) throw new Error("Please login with your admin account.");
+
+      const response = await fetch("http://localhost:5000/api/admin/claims", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Failed to load claims");
+      setClaims(data.claims || []);
+    } catch (err) {
+      setError(err.message || "Could not connect to the server.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadClaims();
+  }, []);
+
+  const reviewClaim = async (claimId, status) => {
+    setActionLoading(claimId);
+    setError("");
+    setNotice("");
+    try {
+      const token = localStorage.getItem("unifind_token");
+      const response = await fetch(
+        `http://localhost:5000/api/admin/claims/${claimId}/status`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ status })
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Could not update claim");
+
+      setNotice(data.message || `Claim ${status} successfully.`);
+      await loadClaims();
+      if (onItemsChanged) await onItemsChanged();
+    } catch (err) {
+      setError(err.message || "Could not connect to the server.");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const lostCount = items.filter(item => item.type === "Lost").length;
+  const foundCount = items.filter(item => item.type === "Found").length;
+  const pendingCount = claims.filter(claim => claim.status === "pending").length;
+
+  return (
+    <main className="mx-auto max-w-6xl px-5 py-12">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-sm font-bold uppercase tracking-wider text-indigo-600">UniFind administration</p>
+          <h1 className="mt-1 text-3xl font-black">Admin Dashboard</h1>
+          <p className="mt-2 text-slate-500">Review submitted claims and monitor campus reports.</p>
+        </div>
+        <button onClick={() => { loadClaims(); if (onItemsChanged) onItemsChanged(); }} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">
+          Refresh Dashboard
+        </button>
+      </div>
+
+      <div className="mt-8 grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-semibold text-slate-500">Total Lost Items</p>
+          <p className="mt-2 text-3xl font-black text-amber-600">{lostCount}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-semibold text-slate-500">Total Found Items</p>
+          <p className="mt-2 text-3xl font-black text-emerald-600">{foundCount}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-semibold text-slate-500">Pending Claims</p>
+          <p className="mt-2 text-3xl font-black text-indigo-600">{pendingCount}</p>
+        </div>
+      </div>
+
+      {notice && <p className="mt-6 rounded-xl bg-emerald-50 p-4 text-sm font-medium text-emerald-700">{notice}</p>}
+      {error && <p className="mt-6 rounded-xl bg-red-50 p-4 text-sm text-red-700">{error}</p>}
+
+      <section className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 p-5">
+          <h2 className="text-xl font-extrabold">Claim Requests</h2>
+          <p className="mt-1 text-sm text-slate-500">Approve or reject pending claims after reviewing the ownership details.</p>
+        </div>
+
+        {loading ? (
+          <p className="p-6 text-slate-500">Loading claims...</p>
+        ) : claims.length === 0 ? (
+          <p className="p-8 text-center text-slate-500">No claim requests found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[850px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-5 py-4">Claim / Item</th>
+                  <th className="px-5 py-4">Claimant</th>
+                  <th className="px-5 py-4">Ownership Details</th>
+                  <th className="px-5 py-4">Status</th>
+                  <th className="px-5 py-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {claims.map(claim => (
+                  <tr key={claim.id} className="align-top">
+                    <td className="px-5 py-4">
+                      <p className="font-bold text-slate-800">{claim.item_name}</p>
+                      <p className="mt-1 text-xs text-slate-400">Claim #{claim.id} · Item #{claim.item_id}</p>
+                      <p className="mt-1 text-xs text-slate-500">{claim.location}</p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <p className="font-semibold text-slate-700">{claim.claimant_name}</p>
+                      <p className="mt-1 text-xs text-slate-500">{claim.claimant_email}</p>
+                    </td>
+                    <td className="max-w-sm whitespace-pre-wrap px-5 py-4 text-slate-600">{claim.message || "No details provided"}</td>
+                    <td className="px-5 py-4">
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                        claim.status === "approved" ? "bg-emerald-50 text-emerald-700" :
+                        claim.status === "rejected" ? "bg-red-50 text-red-700" :
+                        "bg-amber-50 text-amber-700"
+                      }`}>{claim.status}</span>
+                    </td>
+                    <td className="px-5 py-4">
+                      {claim.status === "pending" ? (
+                        <div className="flex flex-col gap-2">
+                          <button
+                            disabled={actionLoading === claim.id}
+                            onClick={() => reviewClaim(claim.id, "approved")}
+                            className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            {actionLoading === claim.id ? "Please wait..." : "Approve"}
+                          </button>
+                          <button
+                            disabled={actionLoading === claim.id}
+                            onClick={() => reviewClaim(claim.id, "rejected")}
+                            className="rounded-lg bg-red-50 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">Reviewed</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
 
 function ReportPage({ go, onReportSubmitted }) {
   const [submitted, setSubmitted] = useState(false);
@@ -502,30 +680,60 @@ function ReportPage({ go, onReportSubmitted }) {
 
 function Field({label,children}){return <label className="block"><span className="mb-2 block text-sm font-bold text-slate-700">{label}</span>{children}</label>}
 
-function Details({item,go,claims,onSubmitClaim}) {
+function Details({item,go}) {
   const [claimOpen,setClaimOpen] = useState(false)
   const [submittedClaim,setSubmittedClaim] = useState(false)
+  const [claimLoading,setClaimLoading] = useState(false)
+  const [claimError,setClaimError] = useState("")
   const [form,setForm] = useState({name:'',email:'',proof:'',contact:''})
+
   if(!item)return <main className="mx-auto max-w-6xl px-5 py-20 text-center"><p>Item not found.</p><button onClick={()=>go('home')} className="mt-4 text-indigo-600">Go home</button></main>
 
-  const existingClaim = claims.find(claim => claim.itemId === item.id && claim.email.toLowerCase() === form.email.trim().toLowerCase() && claim.status === 'Pending')
-  const claimCount = claims.filter(claim => claim.itemId === item.id).length
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
-    const claim = {
-      id: `CLM-${Date.now()}`,
-      itemId: item.id,
-      itemName: item.name,
-      claimantName: form.name.trim(),
-      email: form.email.trim().toLowerCase(),
-      contact: form.contact.trim(),
-      proof: form.proof.trim(),
-      status: 'Pending',
-      submittedAt: new Date().toISOString()
+    setClaimError("")
+
+    const token = localStorage.getItem("unifind_token")
+    if (!token) {
+      setClaimError("Please login before submitting a claim.")
+      return
     }
-    onSubmitClaim(claim)
-    setSubmittedClaim(true)
-    setClaimOpen(false)
+
+    setClaimLoading(true)
+
+    try {
+      const message = [
+        `Claimant name: ${form.name.trim()}`,
+        `Email: ${form.email.trim()}`,
+        form.contact.trim() ? `Contact: ${form.contact.trim()}` : null,
+        `Proof of ownership: ${form.proof.trim()}`
+      ].filter(Boolean).join("\n")
+
+      const response = await fetch("http://localhost:5000/api/claims", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          item_id: item.id,
+          message
+        })
+      })
+
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        throw new Error(data.message || "Failed to submit claim")
+      }
+
+      setSubmittedClaim(true)
+      setClaimOpen(false)
+    } catch (error) {
+      setClaimError(error.message || "Server connection failed")
+    } finally {
+      setClaimLoading(false)
+    }
   }
 
   return <main className="mx-auto max-w-5xl px-5 py-12">
@@ -547,15 +755,27 @@ function Details({item,go,claims,onSubmitClaim}) {
           <p className="flex gap-3"><CalendarDays className="text-indigo-600" size={19}/><span><b>Date</b><br/>{item.date}</span></p>
         </div>
         <p className="mt-6 leading-7 text-slate-600">{item.description}</p>
-        {submittedClaim ? (
-          <div className="mt-7 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
-            <div className="flex items-center gap-2 font-bold"><CheckCircle2 size={20}/> Claim submitted</div>
-            <p className="mt-1 text-sm">Your claim for {item.name} is saved in this browser and is awaiting review.</p>
-          </div>
+        {item.type === 'Found' ? (
+          submittedClaim ? (
+            <div className="mt-7 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
+              <div className="flex items-center gap-2 font-bold"><CheckCircle2 size={20}/> Claim submitted</div>
+              <p className="mt-1 text-sm">Your claim for {item.name} has been saved to the database and is awaiting review.</p>
+            </div>
+          ) : (
+            <button onClick={()=>{
+              if (!localStorage.getItem("unifind_token")) {
+                go("login")
+                return
+              }
+              setClaimError("")
+              setClaimOpen(true)
+            }} className="mt-7 w-full rounded-xl bg-indigo-600 px-5 py-3.5 font-bold text-white hover:bg-indigo-700">Claim This Item</button>
+          )
         ) : (
-          <button onClick={()=>setClaimOpen(true)} className="mt-7 w-full rounded-xl bg-indigo-600 px-5 py-3.5 font-bold text-white hover:bg-indigo-700">Claim This Item</button>
+          <p className="mt-7 rounded-xl bg-slate-100 p-4 text-sm text-slate-600">Claims are available for found items only.</p>
         )}
-        <p className="mt-3 text-center text-xs text-slate-400">Provide details only the rightful owner would know. Your claim will remain pending until reviewed.</p>
+        {claimError && <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{claimError}</p>}
+        {item.type === 'Found' && <p className="mt-3 text-center text-xs text-slate-400">Provide details only the rightful owner would know. Your claim will remain pending until reviewed.</p>}
       </div>
     </div>
 
@@ -569,14 +789,13 @@ function Details({item,go,claims,onSubmitClaim}) {
         <Field label="University email"><input required type="email" maxLength="120" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} className="input" placeholder="you@university.edu"/></Field>
         <Field label="Contact number (optional)"><input type="tel" maxLength="30" value={form.contact} onChange={e=>setForm({...form,contact:e.target.value})} className="input" placeholder="Your phone number"/></Field>
         <Field label="Proof of ownership"><textarea required minLength="15" maxLength="1000" rows="4" value={form.proof} onChange={e=>setForm({...form,proof:e.target.value})} className="input" placeholder="Describe unique marks, contents, stickers, or other details that only the owner would know."/></Field>
-        {existingClaim && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">A pending claim from this email already exists for this item.</p>}
-        <button disabled={Boolean(existingClaim)} className="w-full rounded-xl bg-indigo-600 px-5 py-3 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">Submit Claim Request</button>
+        {claimError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{claimError}</p>}
+        <button type="submit" disabled={claimLoading} className="w-full rounded-xl bg-indigo-600 px-5 py-3 font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{claimLoading ? "Submitting..." : "Submit Claim Request"}</button>
       </form>
-      <p className="mt-4 text-xs leading-5 text-slate-400">Demo limitation: claims are stored in this browser's local storage only. They are not sent to an administrator or shared with other users until a backend is connected.</p>
+      <p className="mt-4 text-xs leading-5 text-slate-400">Your claim details will be saved in the UniFind database and remain pending until reviewed.</p>
     </div>}
   </main>
 }
-
 
 function Auth({ mode, go, onLogin }) {
   const register = mode === "register";

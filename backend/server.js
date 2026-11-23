@@ -1,4 +1,5 @@
 const claimRoutes = require("./routes/claims");
+const adminRoutes = require("./routes/admin");
 const path = require("path");
 const itemRoutes = require("./routes/items");
 const authRoutes = require("./routes/auth");
@@ -21,6 +22,7 @@ app.use(
 app.use("/api/auth", authRoutes);
 app.use("/api/items", itemRoutes);
 app.use("/api/claims", claimRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.get("/api/auth/me", verifyToken, (req, res) => {
     res.json({
